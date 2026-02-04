@@ -1,10 +1,25 @@
 import { test, expect }  from 'playwright-test-coverage';
 
 test('register', async ({ page }) => {
-  await page.goto('http://localhost:5173/');
   const randomSuffix = Math.random().toString(36).substring(2, 7)
   const email = `bob${randomSuffix}@gmail.com`;
   const name = `bob${randomSuffix}`;
+  
+  await page.route('*/**/api/auth', async (route) => {
+    const registerRes = {
+      user: {
+        id: 1,
+        name: name,
+        email: email,
+        roles: [{ role: 'diner' }],
+      },
+      token: 'registertoken',
+    };
+    expect(route.request().method()).toBe('POST');
+    await route.fulfill({ json: registerRes });
+  });
+
+  await page.goto('http://localhost:5173/');
   await expect(page.getByRole('link', { name: 'Register' })).toBeVisible();
   await page.getByRole('link', { name: 'Register' }).click();
   await page.getByRole('textbox', { name: 'Full name' }).fill(name);
