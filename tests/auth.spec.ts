@@ -58,3 +58,34 @@ test('login', async ({ page }) => {
   await page.getByRole('textbox', { name: 'Password' }).fill('a');
   await page.getByRole('button', { name: 'Login' }).click();
 });
+
+test('logout', async ({ page }) => {
+  await page.route('**/api/auth', async (route) => {
+    if (route.request().method() === 'PUT') {
+      await route.fulfill({
+        json: {
+          user: { id: 1, name: 'Test', email: 'test@test.com', roles: [{ role: 'diner' }] },
+          token: 'token',
+        },
+      });
+    } else if (route.request().method() === 'DELETE') {
+      await route.fulfill({ status: 204 });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route('**/api/user/me', async (route) => {
+    await route.fulfill({ json: { id: 1, name: 'Test', email: 'test@test.com', roles: [{ role: 'diner' }] } });
+  });
+
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Login' }).click();
+  await page.getByRole('textbox', { name: 'Email address' }).fill('test@test.com');
+  await page.getByRole('textbox', { name: 'Password' }).fill('test');
+  await page.getByRole('button', { name: 'Login' }).click();
+
+  await expect(page.getByRole('link', { name: 'Logout' })).toBeVisible();
+  await page.getByRole('link', { name: 'Logout' }).click();
+
+  await expect(page).toHaveURL('/');
+});
