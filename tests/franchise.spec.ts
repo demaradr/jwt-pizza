@@ -67,14 +67,34 @@ test.beforeEach(async ({ page }) => {
     const method = route.request().method();
 
     if (method === 'GET' && url.match(/\/api\/user\?/)) {
-      const users = mockUsers.users.filter((u) => !deletedUserIds.has(u.id));
-      await route.fulfill({ json: { users, more: false } });
+      const u = new URL(url);
+      const pageParam = Number(u.searchParams.get('page') ?? '0');
+      const nameParam = u.searchParams.get('name') ?? '*';
+
+      let users = mockUsers.users.filter((user) => {
+        const userId = typeof user.id === 'string' ? Number(user.id) : user.id;
+        return userId !== undefined && !deletedUserIds.has(userId);
+      });
+
+      if (nameParam !== '*' && nameParam !== '') {
+        const normalized = nameParam.split('*').join('').toLowerCase();
+        users = users.filter((user) => (user.name ?? '').toLowerCase().includes(normalized));
+      }
+      if (pageParam >= 1) {
+        await route.fulfill({ json: { users: [], more: false } });
+        return;
+      }
+
+      await route.fulfill({ json: { users, more: users.length > 0 } });
       return;
     }
 
     if (method === 'DELETE' && url.match(/\/api\/user\/(\d+)$/)) {
-      const id = Number(url.match(/\/api\/user\/(\d+)$/)?.[1]);
-      deletedUserIds.add(id);
+      const match = url.match(/\/api\/user\/(\d+)$/);
+      if (match) {
+        const id = Number(match[1]);
+        deletedUserIds.add(id);
+      }
       await route.fulfill({ status: 200, body: '{}' });
       return;
     }
@@ -150,7 +170,7 @@ test('filter franchise', async ({ page }) => {
   
   await page.getByRole('textbox', { name: 'Filter franchises' }).click();
   await page.getByRole('textbox', { name: 'Filter franchises' }).fill('franchise4');
-  await page.getByRole('button', { name: 'Submit' }).click();
+  await page.getByRole('button', { name: 'Submit' }).first().click();
   await expect(page.getByRole('cell', { name: 'franchise4', exact: true })).toBeVisible();
 });
 
@@ -163,8 +183,8 @@ test('admin list users', async ({ page }) => {
   await page.getByRole('link', { name: 'Admin' }).click();
 
   await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Test' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Alice' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Test', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Alice', exact: true })).toBeVisible();
 });
 
 test('admin delete user', async ({ page }) => {
@@ -176,7 +196,54 @@ test('admin delete user', async ({ page }) => {
   await page.getByRole('link', { name: 'Admin' }).click();
 
   await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Alice' })).toBeVisible();
-  await page.getByRole('row', { name: /Alice/ }).getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByRole('cell', { name: 'Alice' })).not.toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Alice', exact: true })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Test', exact: true })).toBeVisible();
+  
+  const deleteButton = page.getByRole('row', { name: /Alice/ }).getByRole('button', { name: 'Delete' });
+  await Promise.all([
+    deleteButton.click(),
+    page.waitForResponse(
+      (response) => /\/api\/user\/\d+$/.test(response.url()) && response.request().method() === 'DELETE'
+    ),
+  ]);
+  
+  await page.waitForLoadState('networkidle');
+  
+  await expect(page.getByRole('cell', { name: 'Test', exact: true })).toBeVisible();
+});
+
+test('admin filter users and paginate user list', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Login' }).click();
+  await page.getByRole('textbox', { name: 'Email address' }).fill('admin@test.com');
+  await page.getByRole('textbox', { name: 'Password' }).fill('test');
+  await page.getByRole('button', { name: 'Login' }).click();
+  await page.getByRole('link', { name: 'Admin' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
+
+  const filterUsersInput = page.getByPlaceholder('Filter users');
+  await filterUsersInput.fill('Alice');
+  await Promise.all([
+    page.getByRole('button', { name: 'Submit' }).nth(1).click(),
+    page.waitForResponse((r) => r.url().includes('/api/user?') && r.request().method() === 'GET'),
+  ]);
+  await expect(page.getByRole('cell', { name: 'Alice', exact: true })).toBeVisible();
+
+  const userNext = page.getByRole('button', { name: '»' }).nth(1);
+  const userPrev = page.getByRole('button', { name: '«' }).nth(1);
+
+  await expect(userNext).toBeEnabled();
+  await Promise.all([
+    userNext.click(),
+    page.waitForResponse((r) => r.url().includes('/api/user?') && r.request().method() === 'GET'),
+  ]);
+  await expect(page.getByRole('cell', { name: 'Alice', exact: true })).not.toBeVisible();
+
+  await expect(userPrev).toBeEnabled();
+  await Promise.all([
+    userPrev.click(),
+    page.waitForResponse((r) => r.url().includes('/api/user?') && r.request().method() === 'GET'),
+  ]);
+  await expect(page.getByRole('cell', { name: 'Alice', exact: true })).toBeVisible();
 });
